@@ -12,143 +12,167 @@
     <div id="status-badge" class="badge badge-loading">Ładowanie danych…</div>
   </header>
 
-  <main>
-    <!-- INPUT PANEL -->
-    <section class="card input-card">
-      <h2>Wybierz mecz</h2>
-      <div class="match-inputs">
-        <!-- Player 1 -->
-        <div class="player-input-group">
-          <label>Zawodnik 1</label>
-          <div class="autocomplete-wrapper">
-            <input id="p1-input" type="text" placeholder="Wyszukaj zawodnika…" autocomplete="off" />
-            <ul id="p1-list" class="dropdown hidden"></ul>
-          </div>
-          <div id="p1-tag" class="player-tag hidden"></div>
-        </div>
+  <div class="page-layout">
 
-        <div class="vs-separator">VS</div>
-
-        <!-- Player 2 -->
-        <div class="player-input-group">
-          <label>Zawodnik 2</label>
-          <div class="autocomplete-wrapper">
-            <input id="p2-input" type="text" placeholder="Wyszukaj zawodnika…" autocomplete="off" />
-            <ul id="p2-list" class="dropdown hidden"></ul>
-          </div>
-          <div id="p2-tag" class="player-tag hidden"></div>
-        </div>
+    <!-- ══ SIDEBAR ══════════════════════════════════════════ -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <span>Bieżące mecze ATP</span>
+        <button id="sidebar-refresh" class="sidebar-refresh-btn" title="Odśwież">↻</button>
       </div>
-
-      <!-- Surface selector -->
-      <div class="surface-row">
-        <span>Nawierzchnia:</span>
-        <div class="surface-buttons" id="surface-buttons">
-          <button class="surface-btn active" data-surface="Hard">Twarda</button>
-          <button class="surface-btn" data-surface="Clay">Ceglasta</button>
-          <button class="surface-btn" data-surface="Grass">Trawa</button>
-          <button class="surface-btn" data-surface="Carpet">Dywan</button>
-        </div>
+      <div id="sidebar-loading" class="sidebar-loading">
+        <div class="spinner-ring small"></div>
+        <span>Pobieranie…</span>
       </div>
-
-      <button id="predict-btn" class="predict-btn" disabled>Przewiduj wynik</button>
-    </section>
-
-    <!-- LOADING SPINNER (hidden by default) -->
-    <div id="spinner" class="spinner hidden">
-      <div class="spinner-ring"></div>
-      <p>Obliczanie…</p>
-    </div>
-
-    <!-- RESULTS PANEL (hidden until predict) -->
-    <section id="results" class="hidden">
-      <!-- Win probability bar -->
-      <div class="card prob-card">
-        <div class="prob-names">
-          <span id="prob-name1"></span>
-          <span id="prob-name2"></span>
-        </div>
-        <div class="prob-bar-container">
-          <div id="prob-bar1" class="prob-bar bar-p1"></div>
-          <div id="prob-bar2" class="prob-bar bar-p2"></div>
-        </div>
-        <div class="prob-pcts">
-          <span id="prob-pct1" class="pct1"></span>
-          <span id="prob-pct2" class="pct2"></span>
-        </div>
-        <div id="surface-label" class="surface-label"></div>
+      <div id="sidebar-error" class="sidebar-error hidden">
+        Brak danych z API
       </div>
+      <ul id="match-list" class="match-list"></ul>
+    </aside>
 
-      <!-- Player comparison cards -->
-      <div class="comparison-grid">
-        <div class="card player-card" id="card-p1">
-          <h3 id="card-name1"></h3>
-          <div class="score-circle" id="score1"></div>
-          <table class="stats-table" id="stats1"></table>
-        </div>
+    <!-- ══ MAIN CONTENT ══════════════════════════════════════ -->
+    <main>
+      <!-- INPUT PANEL -->
+      <section class="card input-card">
+        <h2>Wybierz mecz</h2>
 
-        <div class="card metrics-card">
-          <h3>Porównanie</h3>
-          <div id="radar-container">
-            <canvas id="radar-canvas" width="280" height="280"></canvas>
-          </div>
-        </div>
+        <!-- Tournament badge (shows when match clicked from sidebar) -->
+        <div id="tourney-badge" class="tourney-badge hidden"></div>
 
-        <div class="card player-card" id="card-p2">
-          <h3 id="card-name2"></h3>
-          <div class="score-circle" id="score2"></div>
-          <table class="stats-table" id="stats2"></table>
-        </div>
-      </div>
-
-      <!-- Form & H2H row -->
-      <div class="form-h2h-grid">
-        <div class="card form-card">
-          <h3>Forma (ostatnie mecze)</h3>
-          <div class="form-dots-row">
-            <span id="form-label1"></span>
-            <div id="form-dots1" class="form-dots"></div>
-          </div>
-          <div class="form-dots-row">
-            <span id="form-label2"></span>
-            <div id="form-dots2" class="form-dots"></div>
-          </div>
-        </div>
-
-        <div class="card h2h-card">
-          <h3>Historia bezpośrednich spotkań</h3>
-          <div class="h2h-bar-wrap">
-            <span id="h2h-name1"></span>
-            <div class="h2h-bar-container">
-              <div id="h2h-bar1" class="h2h-bar bar-p1"></div>
-              <div id="h2h-bar2" class="h2h-bar bar-p2"></div>
+        <div class="match-inputs">
+          <!-- Player 1 -->
+          <div class="player-input-group">
+            <label>Zawodnik 1</label>
+            <div class="autocomplete-wrapper">
+              <input id="p1-input" type="text" placeholder="Wyszukaj zawodnika…" autocomplete="off" />
+              <ul id="p1-list" class="dropdown hidden"></ul>
             </div>
-            <span id="h2h-name2"></span>
+            <div id="p1-tag" class="player-tag hidden"></div>
           </div>
-          <div class="h2h-counts">
-            <span id="h2h-count1"></span>
-            <span id="h2h-total"></span>
-            <span id="h2h-count2"></span>
+
+          <div class="vs-separator">VS</div>
+
+          <!-- Player 2 -->
+          <div class="player-input-group">
+            <label>Zawodnik 2</label>
+            <div class="autocomplete-wrapper">
+              <input id="p2-input" type="text" placeholder="Wyszukaj zawodnika…" autocomplete="off" />
+              <ul id="p2-list" class="dropdown hidden"></ul>
+            </div>
+            <div id="p2-tag" class="player-tag hidden"></div>
           </div>
-          <div id="h2h-surface-info" class="h2h-surface"></div>
         </div>
+
+        <!-- Surface selector -->
+        <div class="surface-row">
+          <span>Nawierzchnia:</span>
+          <div class="surface-buttons" id="surface-buttons">
+            <button class="surface-btn active" data-surface="Hard">🔵 Twarda</button>
+            <button class="surface-btn" data-surface="Clay">🟤 Ceglasta</button>
+            <button class="surface-btn" data-surface="Grass">🟢 Trawa</button>
+            <button class="surface-btn" data-surface="Carpet">⚪ Dywan</button>
+          </div>
+        </div>
+
+        <button id="predict-btn" class="predict-btn" disabled>Przewiduj wynik</button>
+      </section>
+
+      <!-- LOADING SPINNER -->
+      <div id="spinner" class="spinner hidden">
+        <div class="spinner-ring"></div>
+        <p>Obliczanie…</p>
       </div>
 
-      <!-- Surface win rates -->
-      <div class="card surface-wr-card">
-        <h3>Win rate na nawierzchniach (ostatnie 3 lata)</h3>
-        <div id="surface-wr-grid" class="surface-wr-grid"></div>
-      </div>
+      <!-- RESULTS PANEL -->
+      <section id="results" class="hidden">
+        <!-- Win probability bar -->
+        <div class="card prob-card">
+          <div class="prob-names">
+            <span id="prob-name1"></span>
+            <span id="prob-name2"></span>
+          </div>
+          <div class="prob-bar-container">
+            <div id="prob-bar1" class="prob-bar bar-p1"></div>
+            <div id="prob-bar2" class="prob-bar bar-p2"></div>
+          </div>
+          <div class="prob-pcts">
+            <span id="prob-pct1" class="pct1"></span>
+            <span id="prob-pct2" class="pct2"></span>
+          </div>
+          <div id="surface-label" class="surface-label"></div>
+        </div>
 
-      <!-- Serve stats -->
-      <div class="card serve-card">
-        <h3>Statystyki serwisu</h3>
-        <div id="serve-grid" class="serve-grid"></div>
-      </div>
+        <!-- Player comparison cards -->
+        <div class="comparison-grid">
+          <div class="card player-card" id="card-p1">
+            <h3 id="card-name1"></h3>
+            <div class="score-circle" id="score1"></div>
+            <table class="stats-table" id="stats1"></table>
+          </div>
 
-      <div id="method-note" class="method-note"></div>
-    </section>
-  </main>
+          <div class="card metrics-card">
+            <h3>Porównanie</h3>
+            <div id="radar-container">
+              <canvas id="radar-canvas" width="280" height="280"></canvas>
+            </div>
+          </div>
+
+          <div class="card player-card" id="card-p2">
+            <h3 id="card-name2"></h3>
+            <div class="score-circle" id="score2"></div>
+            <table class="stats-table" id="stats2"></table>
+          </div>
+        </div>
+
+        <!-- Form & H2H -->
+        <div class="form-h2h-grid">
+          <div class="card form-card">
+            <h3>Forma (ostatnie mecze)</h3>
+            <div class="form-dots-row">
+              <span id="form-label1"></span>
+              <div id="form-dots1" class="form-dots"></div>
+            </div>
+            <div class="form-dots-row">
+              <span id="form-label2"></span>
+              <div id="form-dots2" class="form-dots"></div>
+            </div>
+          </div>
+
+          <div class="card h2h-card">
+            <h3>Historia bezpośrednich spotkań</h3>
+            <div class="h2h-bar-wrap">
+              <span id="h2h-name1"></span>
+              <div class="h2h-bar-container">
+                <div id="h2h-bar1" class="h2h-bar bar-p1"></div>
+                <div id="h2h-bar2" class="h2h-bar bar-p2"></div>
+              </div>
+              <span id="h2h-name2"></span>
+            </div>
+            <div class="h2h-counts">
+              <span id="h2h-count1"></span>
+              <span id="h2h-total"></span>
+              <span id="h2h-count2"></span>
+            </div>
+            <div id="h2h-surface-info" class="h2h-surface"></div>
+          </div>
+        </div>
+
+        <!-- Surface WR -->
+        <div class="card surface-wr-card">
+          <h3>Win rate na nawierzchniach (ostatnie 3 lata)</h3>
+          <div id="surface-wr-grid" class="surface-wr-grid"></div>
+        </div>
+
+        <!-- Serve stats -->
+        <div class="card serve-card">
+          <h3>Statystyki serwisu</h3>
+          <div id="serve-grid" class="serve-grid"></div>
+        </div>
+
+        <div id="method-note" class="method-note"></div>
+      </section>
+    </main>
+  </div><!-- /page-layout -->
 
   <script src="/static/app.js"></script>
 </body>

@@ -413,8 +413,126 @@ function drawRadar(p1, p2, surface) {
   ctx.fillText(p2.name.split(' ').pop(), W / 2 + 26, H - 18);
 }
 
+/* ── Sidebar: upcoming matches ───────────────────────────── */
+const SURFACE_LABELS_PL = { Hard: 'Twarda', Clay: 'Ceglasta', Grass: 'Trawa', Carpet: 'Dywan' };
+
+async function loadSidebarMatches() {
+  const loadingEl = document.getElementById('sidebar-loading');
+  const errorEl   = document.getElementById('sidebar-error');
+  const listEl    = document.getElementById('match-list');
+
+  loadingEl.classList.remove('hidden');
+  errorEl.classList.add('hidden');
+  listEl.innerHTML = '';
+
+  try {
+    const refresh = loadingEl.dataset.refresh === '1';
+    loadingEl.dataset.refresh = '0';
+    const r = await fetch(`${API}/api/matches/upcoming?limit=30${refresh ? '&refresh=true' : ''}`);
+    if (!r.ok) throw new Error(r.statusText);
+    const data = await r.json();
+    const matches = data.matches || [];
+
+    loadingEl.classList.add('hidden');
+
+    if (matches.length === 0) {
+      errorEl.textContent = 'Brak nadchodzących meczów';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    // Group by tournament
+    const groups = {};
+    for (const m of matches) {
+      const key = m.tournament || 'ATP';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(m);
+    }
+
+    for (const [tourney, ms] of Object.entries(groups)) {
+      // Group header
+      const header = document.createElement('li');
+      header.className = 'match-group-header';
+      header.textContent = tourney;
+      header.style.cssText = 'padding:10px 18px 4px; font-size:.7rem; text-transform:uppercase; letter-spacing:.6px; color:#4a5170; font-weight:700;';
+      listEl.appendChild(header);
+
+      for (const m of ms) {
+        const li = renderMatchItem(m);
+        listEl.appendChild(li);
+      }
+    }
+  } catch (e) {
+    loadingEl.classList.add('hidden');
+    errorEl.textContent = `Błąd: ${e.message}`;
+    errorEl.classList.remove('hidden');
+  }
+}
+
+function renderMatchItem(m) {
+  const li = document.createElement('li');
+  const hasData = m.both_resolved;
+  li.className = 'match-item' + (hasData ? '' : ' no-data');
+  li.dataset.match = JSON.stringify(m);
+
+  const p1display = m.player1_resolved || m.player1_raw;
+  const p2display = m.player2_resolved || m.player2_raw;
+  const surfaceLabel = SURFACE_LABELS_PL[m.surface] || m.surface;
+  const roundStr = m.round ? ` · ${m.round}` : '';
+
+  li.innerHTML = `
+    <div class="match-tourney">${m.date_display || ''}${roundStr}</div>
+    <div class="match-players">
+      <span class="p1">${p1display}</span><br>
+      <span class="p2">${p2display}</span>
+    </div>
+    <div class="match-meta">
+      <span class="match-surface-pill pill-${m.surface}">${m.surface_icon} ${surfaceLabel}</span>
+      ${!hasData ? '<span class="match-no-data-badge">brak w bazie</span>' : ''}
+    </div>`;
+
+  if (hasData) {
+    li.addEventListener('click', () => applyMatchFromSidebar(m, li));
+  }
+  return li;
+}
+
+function applyMatchFromSidebar(m, liEl) {
+  // Highlight active
+  document.querySelectorAll('.match-item').forEach(el => el.classList.remove('active'));
+  liEl.classList.add('active');
+
+  // Set players
+  selectPlayer1(m.player1_resolved);
+  selectPlayer2(m.player2_resolved);
+
+  // Set surface
+  setSurface(m.surface);
+
+  // Show tournament badge
+  const badge = document.getElementById('tourney-badge');
+  badge.textContent = `🏆 ${m.tournament}  ·  ${m.surface_icon} ${SURFACE_LABELS_PL[m.surface]}  ·  ${m.date_display || ''}`;
+  badge.classList.remove('hidden');
+
+  // Scroll main content to top
+  document.querySelector('main').scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function setSurface(surface) {
+  selectedSurface = surface;
+  document.querySelectorAll('.surface-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.surface === surface);
+  });
+}
+
+document.getElementById('sidebar-refresh').addEventListener('click', () => {
+  document.getElementById('sidebar-loading').dataset.refresh = '1';
+  loadSidebarMatches();
+});
+
 /* ── Init ────────────────────────────────────────────────── */
 setupAutocomplete('p1-input', 'p1-list', selectPlayer1, () => selectedPlayer2);
 setupAutocomplete('p2-input', 'p2-list', selectPlayer2, () => selectedPlayer1);
 
 waitUntilReady();
+loadSidebarMatches();

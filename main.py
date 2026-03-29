@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from data.downloader import load_all_matches
 from models.predictor import TennisPredictor
 from routers.prediction import router as prediction_router
+from routers.matches import router as matches_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,6 +53,7 @@ app = FastAPI(
 )
 
 app.include_router(prediction_router)
+app.include_router(matches_router)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
