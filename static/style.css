@@ -180,6 +180,42 @@ header {
   padding: 1px 6px;
   border-radius: 6px;
 }
+.match-tourney-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  min-height: 18px;
+}
+.match-live-badge {
+  font-size: .65rem;
+  font-weight: 800;
+  color: #ff4444;
+  background: #3a1010;
+  padding: 2px 7px;
+  border-radius: 6px;
+  animation: pulse 1.5s infinite;
+  letter-spacing: .3px;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+.match-time-badge {
+  font-size: .68rem;
+  font-weight: 700;
+  color: #4caf50;
+  background: #0d2d18;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+.match-date-small {
+  font-size: .65rem;
+  color: var(--text-muted);
+}
+.match-score {
+  font-size: .75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
 
 /* ── Main content ────────────────────────────────────────── */
 main {

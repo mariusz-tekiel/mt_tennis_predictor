@@ -1,7 +1,7 @@
 """
-Fetches recent/upcoming ATP matches from TheSportsDB (free API, key=3).
-Strategy: scan rounds of the current season to find the latest available matches.
-Returns normalised list with surface inferred from tournament name.
+Fetches current/upcoming ATP matches from ESPN public API (no key required).
+Falls back to TheSportsDB if ESPN fails.
+Caches results to disk (3h) and memory (30min).
 """
 from __future__ import annotations
 
@@ -15,21 +15,48 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+ESPN_ATP_URL = "https://site.api.espn.com/apis/site/v2/sports/tennis/atp/scoreboard"
 THESPORTSDB_BASE = "https://www.thesportsdb.com/api/v1/json/3"
-ATP_LEAGUE_ID = "4464"   # ATP World Tour
-CACHE_TTL_SECONDS = 1800  # 30 minutes — in-memory cache
-DISK_CACHE_TTL_HOURS = 6  # hours — disk cache survives restarts
+ATP_LEAGUE_ID = "4464"
+
+CACHE_TTL_SECONDS = 1800
+DISK_CACHE_TTL_HOURS = 3
 DISK_CACHE_FILE = Path(__file__).parent / "cache" / "atp_matches.json"
 
 _mem_cache: dict = {"data": None, "ts": None}
 
+SURFACE_LABELS = {"Hard": "Twarda", "Clay": "Ceglasta", "Grass": "Trawa", "Carpet": "Dywan"}
+SURFACE_ICONS  = {"Hard": "🔵",     "Clay": "🟤",       "Grass": "🟢",    "Carpet": "⚪"}
 
-def _load_disk_cache() -> list[dict] | None:
+GRASS_KW = ["wimbledon","queens","queen's","halle","hertogenbosch","eastbourne","newport"]
+CLAY_KW  = ["roland garros","french open","monte-carlo","monte carlo","madrid","rome","italian",
+            "barcelona","munich","hamburg","estoril","bucharest","istanbul","marrakech","gstaad",
+            "umag","kitzbuhel","bastad","geneva","lyon","cordoba","buenos aires","rio","sao paulo",
+            "santiago","tiriac","hassan","casablanca","clay court","houston","fayez sarofim",
+            "grand prix hassan","marrakesh"]
+HARD_KW  = ["australian open","us open","miami","indian wells","montreal","toronto","cincinnati",
+            "shanghai","paris","vienna","dubai","doha","qatar","acapulco","rotterdam","washington",
+            "brisbane","sydney","adelaide","astana","metz","st. petersburg","antwerp","beijing",
+            "tokyo","bnp paribas open"]
+
+
+def infer_surface(text: str) -> str:
+    t = text.lower()
+    for kw in GRASS_KW:
+        if kw in t: return "Grass"
+    for kw in CLAY_KW:
+        if kw in t: return "Clay"
+    for kw in HARD_KW:
+        if kw in t: return "Hard"
+    return "Hard"
+
+
+# ── Disk cache ────────────────────────────────────────────────────────────────
+def _load_disk() -> list[dict] | None:
     try:
         if not DISK_CACHE_FILE.exists():
             return None
-        with DISK_CACHE_FILE.open() as f:
-            obj = json.load(f)
+        obj = json.loads(DISK_CACHE_FILE.read_text(encoding="utf-8"))
         ts = datetime.fromisoformat(obj["ts"])
         if (datetime.now() - ts).total_seconds() < DISK_CACHE_TTL_HOURS * 3600:
             return obj["data"]
@@ -38,174 +65,205 @@ def _load_disk_cache() -> list[dict] | None:
     return None
 
 
-def _save_disk_cache(data: list[dict]) -> None:
+def _save_disk(data: list[dict]) -> None:
     try:
         DISK_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with DISK_CACHE_FILE.open("w") as f:
-            json.dump({"ts": datetime.now().isoformat(), "data": data}, f)
+        DISK_CACHE_FILE.write_text(
+            json.dumps({"ts": datetime.now().isoformat(), "data": data}), encoding="utf-8"
+        )
     except Exception as e:
-        logger.warning(f"Could not save disk cache: {e}")
-
-# ── Surface inference ─────────────────────────────────────────────────────────
-GRASS_KEYWORDS = [
-    "wimbledon", "queens", "queen's", "halle", "s-hertogenbosch", "hertogenbosch",
-    "eastbourne", "newport",
-]
-CLAY_KEYWORDS = [
-    "roland garros", "french open", "monte-carlo", "monte carlo",
-    "madrid", "rome", "italian open", "barcelona", "munich", "hamburg",
-    "estoril", "bucharest", "istanbul", "marrakech", "gstaad", "umag",
-    "kitzbuhel", "bastad", "geneva", "lyon", "cordoba", "buenos aires",
-    "rio", "sao paulo", "santiago",
-]
-HARD_KEYWORDS = [
-    "australian open", "us open", "miami", "indian wells", "montreal", "toronto",
-    "cincinnati", "shanghai", "paris", "vienna", "dubai", "doha", "qatar",
-    "acapulco", "rotterdam", "washington", "brisbane", "sydney", "adelaide",
-    "astana", "metz", "st. petersburg", "antwerp", "beijing", "tokyo",
-]
-
-SURFACE_LABELS = {"Hard": "Twarda", "Clay": "Ceglasta", "Grass": "Trawa", "Carpet": "Dywan"}
-SURFACE_ICONS  = {"Hard": "🔵",     "Clay": "🟤",       "Grass": "🟢",    "Carpet": "⚪"}
+        logger.warning(f"Disk cache write failed: {e}")
 
 
-# Known multi-word ATP tournament name prefixes (longest first for greedy match)
-_KNOWN_TOURNEYS = [
-    "Australian Open", "Roland Garros", "French Open", "Wimbledon", "US Open",
-    "BNP Paribas Open", "Miami Open", "Monte-Carlo Masters", "Mutua Madrid Open",
-    "Internazionali BNL d'Italia", "French Open", "Cinch Championships",
-    "Halle Open", "Wimbledon", "Rogers Cup", "Western & Southern Open",
-    "Laver Cup", "Shanghai Rolex Masters", "Rolex Paris Masters",
-    "Erste Bank Open", "Swiss Indoors", "Nitto ATP Finals",
-    "Brisbane International", "Sydney International", "Adelaide International",
-    "Dubai Duty Free Championships", "Qatar Total Open",
-    "ABN AMRO World Tennis Tournament", "Open Sud de France",
-    "Argentina Open", "Cordoba Open", "Rio Open", "Ecuador Open",
-    "Delray Beach Open", "New York Open", "Open 13 Provence",
-    "Abierto Mexicano Telcel", "Dubai Tennis Championships",
-    "Abierto Mexicano", "Astana Open", "European Open",
-    "Moselle Open", "Metz Open", "St. Petersburg Open",
-    "Sofia Open", "Stockholm Open", "Swiss Indoors Basel",
-    "Tenerife Open", "Gijon Open",
-]
-_KNOWN_TOURNEYS_LOWER = [(t.lower(), t) for t in sorted(_KNOWN_TOURNEYS, key=len, reverse=True)]
-
-
-def _split_tourney_player(left_str: str) -> tuple[str, str]:
-    """
-    Split 'Tournament Name Player1Surname' into (tournament, player_name).
-    Uses known tournament list, falling back to 'strip last token'.
-    """
-    left_lower = left_str.lower()
-    for kw_lower, kw_orig in _KNOWN_TOURNEYS_LOWER:
-        if left_lower.startswith(kw_lower):
-            player = left_str[len(kw_lower):].strip()
-            if player:
-                return kw_orig, player
-    # Fallback: last token(s) = player, rest = tournament
-    tokens = left_str.split()
-    if len(tokens) == 1:
-        return "", tokens[0]
-    # Try to keep multi-word player names (2 words max)
-    if len(tokens) >= 3:
-        return " ".join(tokens[:-1]), tokens[-1]
-    return tokens[0], tokens[1]
-
-
-def infer_surface(text: str) -> str:
-    t = text.lower()
-    for kw in GRASS_KEYWORDS:
-        if kw in t: return "Grass"
-    for kw in CLAY_KEYWORDS:
-        if kw in t: return "Clay"
-    for kw in HARD_KEYWORDS:
-        if kw in t: return "Hard"
-    return "Hard"
-
-
-def _parse_event(ev: dict) -> dict | None:
-    event_name = (ev.get("strEvent") or "").strip()
-    if not event_name:
+# ── ESPN fetcher ──────────────────────────────────────────────────────────────
+def _parse_espn_competition(comp: dict, tourney: str, surface: str) -> dict | None:
+    competitors = comp.get("competitors") or []
+    if len(competitors) < 2:
         return None
 
-    # Skip non-tennis, doubles, women
-    event_lower = event_name.lower()
-    if any(w in event_lower for w in ["doubles", "mixed", "wta", "women's"]):
+    def get_name(c: dict) -> str:
+        ath = c.get("athlete") or {}
+        return (ath.get("displayName") or ath.get("fullName") or "").strip()
+
+    p1 = get_name(competitors[0])
+    p2 = get_name(competitors[1])
+    if not p1 or not p2:
+        return None
+    if any(x in (p1 + p2).upper() for x in ["TBD", "BYE", "WINNER OF"]):
+        return None
+
+    status_type = (comp.get("status") or {}).get("type") or {}
+    state = status_type.get("state", "pre")       # pre | in | post
+    status_text = status_type.get("description", "")
+
+    date_str = comp.get("date") or comp.get("startDate") or ""
+    try:
+        dt_utc = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        dt_local = dt_utc.astimezone().replace(tzinfo=None)
+    except Exception:
+        dt_local = None
+
+    score = None
+    if state in ("in", "post"):
+        s0 = competitors[0].get("score", "")
+        s1 = competitors[1].get("score", "")
+        if s0 or s1:
+            score = f"{s0}–{s1}"
+
+    return {
+        "id": comp.get("id", ""),
+        "tournament": tourney,
+        "round": "",
+        "date": dt_local.isoformat() if dt_local else date_str,
+        "date_display": dt_local.strftime("%d %b %Y").lstrip("0") if dt_local else date_str[:10],
+        "time_display": dt_local.strftime("%H:%M") if dt_local else "",
+        "player1_raw": p1,
+        "player2_raw": p2,
+        "surface": surface,
+        "surface_label": SURFACE_LABELS[surface],
+        "surface_icon": SURFACE_ICONS[surface],
+        "state": state,
+        "status_text": status_text,
+        "finished": state == "post",
+        "live": state == "in",
+        "score": score,
+    }
+
+
+async def _fetch_espn(days_back: int = 2, days_forward: int = 10) -> list[dict]:
+    today = datetime.now()
+    start = (today - timedelta(days=days_back)).strftime("%Y%m%d")
+    end   = (today + timedelta(days=days_forward)).strftime("%Y%m%d")
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=12,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+        ) as client:
+            r = await client.get(ESPN_ATP_URL, params={"dates": f"{start}-{end}"})
+            r.raise_for_status()
+            data = r.json()
+    except Exception as e:
+        logger.warning(f"ESPN fetch failed: {e}")
+        return []
+
+    matches: list[dict] = []
+    for event in data.get("events") or []:
+        tourney = event.get("name") or event.get("shortName") or "ATP"
+        surface = infer_surface(tourney)
+        for grouping in event.get("groupings") or []:
+            grp = (grouping.get("grouping") or {}).get("displayName", "")
+            if any(w in grp.lower() for w in ["doubles", "mixed"]):
+                continue
+            for comp in grouping.get("competitions") or []:
+                m = _parse_espn_competition(comp, tourney, surface)
+                if m:
+                    matches.append(m)
+
+    logger.info(f"ESPN returned {len(matches)} matches")
+    return matches
+
+
+# ── TheSportsDB fallback ──────────────────────────────────────────────────────
+_KNOWN_TOURNEYS = [
+    ("bnp paribas open", "BNP Paribas Open"),
+    ("miami open", "Miami Open"),
+    ("monte-carlo", "Monte-Carlo Masters"),
+    ("madrid open", "Madrid Open"),
+    ("italian open", "Italian Open"),
+    ("roland garros", "Roland Garros"),
+    ("wimbledon", "Wimbledon"),
+    ("us open", "US Open"),
+    ("australian open", "Australian Open"),
+    ("brisbane international", "Brisbane International"),
+    ("sydney international", "Sydney International"),
+]
+
+
+def _split_tourney_player(left: str) -> tuple[str, str]:
+    ll = left.lower()
+    for kw, name in sorted(_KNOWN_TOURNEYS, key=lambda x: -len(x[0])):
+        if ll.startswith(kw):
+            player = left[len(kw):].strip()
+            if player:
+                return name, player
+    tokens = left.split()
+    if len(tokens) >= 3:
+        return " ".join(tokens[:-1]), tokens[-1]
+    if len(tokens) == 2:
+        return tokens[0], tokens[1]
+    return "", left
+
+
+def _parse_sportsdb_event(ev: dict) -> dict | None:
+    event_name = (ev.get("strEvent") or "").strip()
+    if not event_name or " vs " not in event_name:
+        return None
+    if any(w in event_name.lower() for w in ["doubles", "mixed", "wta", "women's"]):
         return None
     if ev.get("strSport", "").lower() not in ("tennis", ""):
         return None
 
-    # TheSportsDB tennis format: "Tournament Name Player1 vs Player2"
-    # strHomeTeam/Away are sometimes null — extract from strEvent
-    home = (ev.get("strHomeTeam") or "").strip()
-    away = (ev.get("strAwayTeam") or "").strip()
-
-    if not home or not away:
-        # Extract from "Tournament Player1 vs Player2"
-        if " vs " not in event_name:
-            return None
-        left, right = event_name.split(" vs ", 1)
-        away = right.strip()
-        # Tournament name is the known prefix — strip last 1-2 words = player name
-        # Use known tournament list to be more precise
-        tourney_end, home = _split_tourney_player(left.strip())
-        tourney = tourney_end
-    else:
-        tourney = ev.get("strLeague") or event_name
-
+    left, right = event_name.split(" vs ", 1)
+    away = right.strip()
+    tourney, home = _split_tourney_player(left.strip())
     if not home or not away:
         return None
 
-    surface = infer_surface(event_name + " " + (ev.get("strVenue") or ""))
-
     date_str = ev.get("dateEvent") or ""
-    time_str = (ev.get("strTime") or "00:00:00")[:5]
     try:
-        dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
     except Exception:
         dt = None
 
+    surface = infer_surface(event_name)
     score_h = ev.get("intHomeScore")
     score_a = ev.get("intAwayScore")
-    finished = score_h is not None and score_a is not None
 
     return {
-        "id": ev.get("idEvent", ""),
-        "tournament": tourney,
-        "round": str(ev.get("intRound") or ev.get("strRound") or ""),
+        "id": f"sdb-{ev.get('idEvent','')}",
+        "tournament": tourney or "ATP",
+        "round": str(ev.get("intRound") or ""),
         "date": dt.isoformat() if dt else date_str,
         "date_display": dt.strftime("%d %b %Y").lstrip("0") if dt else date_str,
+        "time_display": "",
         "player1_raw": home,
         "player2_raw": away,
         "surface": surface,
         "surface_label": SURFACE_LABELS[surface],
         "surface_icon": SURFACE_ICONS[surface],
-        "finished": finished,
-        "score": f"{score_h}–{score_a}" if finished else None,
+        "state": "post" if score_h is not None else "pre",
+        "status_text": "",
+        "finished": score_h is not None,
+        "live": False,
+        "score": score_h and f"{score_h}–{score_a}",
     }
 
 
-async def _fetch_round(client: httpx.AsyncClient, round_num: int, season: str) -> list[dict] | None:
-    """Returns events list, or None on 429 (rate limited)."""
-    url = f"{THESPORTSDB_BASE}/eventsround.php?id={ATP_LEAGUE_ID}&r={round_num}&s={season}"
-    try:
-        r = await client.get(url, timeout=8)
-        if r.status_code == 429:
-            return None  # signal rate limit
-        r.raise_for_status()
-        return r.json().get("events") or []
-    except Exception:
-        return []
+async def _fetch_sportsdb_fallback() -> list[dict]:
+    results = []
+    async with httpx.AsyncClient(timeout=10) as client:
+        for rn in range(13, 18):
+            try:
+                r = await client.get(
+                    f"{THESPORTSDB_BASE}/eventsround.php?id={ATP_LEAGUE_ID}&r={rn}&s=2026"
+                )
+                if r.status_code == 429:
+                    break
+                for ev in (r.json().get("events") or []):
+                    m = _parse_sportsdb_event(ev)
+                    if m:
+                        results.append(m)
+                await asyncio.sleep(0.3)
+            except Exception:
+                break
+    return results
 
 
-async def fetch_upcoming_matches(limit: int = 30, force_refresh: bool = False) -> list[dict]:
-    """
-    Scan rounds sequentially (to avoid 429), find the latest ATP matches,
-    and return them sorted by date desc (most recent first).
-    """
+# ── Public API ────────────────────────────────────────────────────────────────
+async def fetch_upcoming_matches(limit: int = 40, force_refresh: bool = False) -> list[dict]:
     now = datetime.now()
 
-    # 1. In-memory cache
     if (
         not force_refresh
         and _mem_cache["data"] is not None
@@ -214,81 +272,37 @@ async def fetch_upcoming_matches(limit: int = 30, force_refresh: bool = False) -
     ):
         return _mem_cache["data"][:limit]
 
-    # 2. Disk cache (survives restarts)
     if not force_refresh:
-        disk = _load_disk_cache()
+        disk = _load_disk()
         if disk is not None:
-            _mem_cache["data"] = disk
-            _mem_cache["ts"] = now
+            _mem_cache.update({"data": disk, "ts": now})
             return disk[:limit]
 
-    today = now
-    current_year = str(today.year)
-    prev_year = str(today.year - 1)
+    matches = await _fetch_espn()
 
-    all_raw: list[dict] = []
-    rate_limited = False
+    if not matches:
+        logger.info("ESPN returned no matches — trying TheSportsDB fallback")
+        matches = await _fetch_sportsdb_fallback()
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        for season in [current_year, prev_year]:
-            last_empty = 0
-            for rn in range(1, 25):
-                events = await _fetch_round(client, rn, season)
-                if events is None:   # 429
-                    rate_limited = True
-                    break
-                if not events:
-                    last_empty += 1
-                    if last_empty >= 2:
-                        break
-                    continue
-                last_empty = 0
-                all_raw.extend(events)
-                await asyncio.sleep(0.3)   # gentle throttle
-            if all_raw or rate_limited:
-                break
-
-    # On 429 fall back to any cached data we have
-    if rate_limited and not all_raw:
-        fallback = _load_disk_cache()
-        if fallback:
-            logger.warning("Rate limited by TheSportsDB, returning stale cache")
-            return fallback[:limit]
+    if not matches:
         return []
 
-    # Parse
-    parsed: list[dict] = []
+    # Deduplicate
     seen: set[str] = set()
-    for ev in all_raw:
-        p = _parse_event(ev)
-        if p and p["id"] not in seen:
-            seen.add(p["id"])
-            parsed.append(p)
+    unique = [m for m in matches if not (m["id"] in seen or seen.add(m["id"]))]  # type: ignore
 
-    if not parsed:
-        return []
-
-    # Filter: last 90 days → next 60 days
-    window_start = today - timedelta(days=90)
-    window_end   = today + timedelta(days=60)
-    in_window: list[dict] = []
-    for m in parsed:
+    # Sort: live → upcoming (asc date) → finished (desc date)
+    def _sort_key(m: dict):
+        order = {"in": 0, "pre": 1, "post": 2}.get(m["state"], 3)
         try:
-            dt = datetime.fromisoformat(m["date"])
-            if window_start <= dt <= window_end:
-                in_window.append(m)
+            ts = datetime.fromisoformat(m["date"]).timestamp()
         except Exception:
-            pass
+            ts = 0.0
+        return (order, ts if m["state"] == "pre" else -ts)
 
-    # If nothing in window, fall back to the most recent matches available
-    if not in_window:
-        in_window = sorted(parsed, key=lambda x: x["date"], reverse=True)[:limit]
+    unique.sort(key=_sort_key)
+    result = unique[:limit]
 
-    # Sort: most recent first
-    in_window.sort(key=lambda x: x["date"], reverse=True)
-
-    result = in_window[:limit]
-    _mem_cache["data"] = result
-    _mem_cache["ts"] = now
-    _save_disk_cache(result)
+    _mem_cache.update({"data": result, "ts": now})
+    _save_disk(result)
     return result

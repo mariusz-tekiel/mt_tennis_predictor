@@ -478,12 +478,29 @@ function renderMatchItem(m) {
   const p1display = m.player1_resolved || m.player1_raw;
   const p2display = m.player2_resolved || m.player2_raw;
   const surfaceLabel = SURFACE_LABELS_PL[m.surface] || m.surface;
-  const roundStr = m.round ? ` · ${m.round}` : '';
+
+  // Status badge
+  let statusBadge = '';
+  if (m.live) {
+    statusBadge = '<span class="match-live-badge">● LIVE</span>';
+  } else if (!m.finished && m.time_display) {
+    statusBadge = `<span class="match-time-badge">${m.time_display}</span>`;
+  } else if (!m.finished) {
+    statusBadge = `<span class="match-time-badge">${m.date_display || ''}</span>`;
+  }
+
+  // Score for finished/live
+  const scoreStr = m.score ? `<span class="match-score">${m.score}</span>` : '';
 
   li.innerHTML = `
-    <div class="match-tourney">${m.date_display || ''}${roundStr}</div>
+    <div class="match-tourney-row">
+      ${statusBadge}
+      <span class="match-date-small">${m.finished ? m.date_display : ''}</span>
+    </div>
     <div class="match-players">
-      <span class="p1">${p1display}</span><br>
+      <span class="p1">${p1display}</span>
+      ${scoreStr}
+      <br>
       <span class="p2">${p2display}</span>
     </div>
     <div class="match-meta">
