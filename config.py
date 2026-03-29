@@ -6,7 +6,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Jeff Sackmann tennis_atp raw CSVs
 SACKMANN_BASE = "https://raw.githubusercontent.com/JeffSackmann/tennis_atp/master"
-YEARS_TO_LOAD = list(range(2015, 2026))  # 10 years of history
+YEARS_TO_LOAD = list(range(2015, 2025))  # 2015–2024 (Sackmann repo)
 
 # BALLDONTLIE ATP API
 BALLDONTLIE_BASE = "https://api.balldontlie.io/atp/v1"
