@@ -55,6 +55,7 @@ class TennisPredictor:
         self._matches: pd.DataFrame | None = None
         self._elo_ratings: dict[str, PlayerElo] = {}
         self._player_names: list[str] = []
+        self._player_nationalities: dict[str, str] = {}
         self._ready = False
 
     # ------------------------------------------------------------------
@@ -68,6 +69,13 @@ class TennisPredictor:
         winners = set(matches["winner_name"].dropna().unique())
         losers = set(matches["loser_name"].dropna().unique())
         self._player_names = sorted(winners | losers)
+        # Build player → IOC nationality mapping (last known value wins)
+        nat: dict[str, str] = {}
+        for _, row in matches[["winner_name", "winner_ioc"]].dropna().iterrows():
+            nat[row["winner_name"]] = row["winner_ioc"]
+        for _, row in matches[["loser_name", "loser_ioc"]].dropna().iterrows():
+            nat[row["loser_name"]] = row["loser_ioc"]
+        self._player_nationalities = nat
         self._ready = True
 
     @property
@@ -197,6 +205,7 @@ class TennisPredictor:
         return {
             "player1": {
                 "name": player1,
+                "ioc": self._player_nationalities.get(player1, ""),
                 "win_pct": round(p1_win * 100, 1),
                 "score": score1,
                 "rank": rank1,
@@ -210,6 +219,7 @@ class TennisPredictor:
             },
             "player2": {
                 "name": player2,
+                "ioc": self._player_nationalities.get(player2, ""),
                 "win_pct": round(p2_win * 100, 1),
                 "score": score2,
                 "rank": rank2,

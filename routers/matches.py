@@ -64,6 +64,8 @@ async def upcoming_matches(request: Request, limit: int = 25, refresh: bool = Fa
 
     raw_matches = await fetch_upcoming_matches(limit=limit, force_refresh=refresh)
 
+    nationalities: dict[str, str] = getattr(predictor, "_player_nationalities", {})
+
     enriched = []
     for m in raw_matches:
         p1_resolved = _resolve_name(m["player1_raw"], known_players)
@@ -73,6 +75,8 @@ async def upcoming_matches(request: Request, limit: int = 25, refresh: bool = Fa
             "player1_resolved": p1_resolved,
             "player2_resolved": p2_resolved,
             "both_resolved": p1_resolved is not None and p2_resolved is not None,
+            "player1_ioc": nationalities.get(p1_resolved, "") if p1_resolved else "",
+            "player2_ioc": nationalities.get(p2_resolved, "") if p2_resolved else "",
         })
 
     return {"matches": enriched}

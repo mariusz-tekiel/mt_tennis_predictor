@@ -166,8 +166,8 @@ function renderResults(d) {
   const p2 = d.player2;
 
   /* probability bar */
-  setText('prob-name1', p1.name);
-  setText('prob-name2', p2.name);
+  setNameWithFlag('prob-name1', p1.name, p1.ioc);
+  setNameWithFlag('prob-name2', p2.name, p2.ioc);
   document.getElementById('prob-bar1').style.width = p1.win_pct + '%';
   document.getElementById('prob-bar2').style.width = p2.win_pct + '%';
   setText('prob-pct1', p1.win_pct + '%');
@@ -175,8 +175,8 @@ function renderResults(d) {
   setText('surface-label', `Nawierzchnia: ${d.surface}`);
 
   /* player cards */
-  setText('card-name1', p1.name);
-  setText('card-name2', p2.name);
+  setNameWithFlag('card-name1', p1.name, p1.ioc);
+  setNameWithFlag('card-name2', p2.name, p2.ioc);
   setText('score1', p1.score);
   setText('score2', p2.score);
 
@@ -184,14 +184,14 @@ function renderResults(d) {
   fillStatsTable('stats2', p2, d.surface);
 
   /* form dots */
-  setText('form-label1', p1.name.split(' ').pop());
-  setText('form-label2', p2.name.split(' ').pop());
+  setNameWithFlag('form-label1', p1.name.split(' ').pop(), p1.ioc);
+  setNameWithFlag('form-label2', p2.name.split(' ').pop(), p2.ioc);
   renderFormDots('form-dots1', p1.form_last_10);
   renderFormDots('form-dots2', p2.form_last_10);
 
   /* H2H bar */
-  setText('h2h-name1', p1.name.split(' ').pop());
-  setText('h2h-name2', p2.name.split(' ').pop());
+  setNameWithFlag('h2h-name1', p1.name.split(' ').pop(), p1.ioc);
+  setNameWithFlag('h2h-name2', p2.name.split(' ').pop(), p2.ioc);
   const total = d.h2h_total;
   if (total === 0) {
     document.getElementById('h2h-bar1').style.width = '50%';
@@ -229,6 +229,13 @@ function renderResults(d) {
 function setText(id, val) {
   const el = document.getElementById(id);
   if (el) el.textContent = val;
+}
+
+function setNameWithFlag(id, name, ioc) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const flag = iocToFlag(ioc);
+  el.innerHTML = flag ? `${flag} ${name}` : name;
 }
 
 function fillStatsTable(tableId, p, surface) {
@@ -416,6 +423,75 @@ function drawRadar(p1, p2, surface) {
 /* ── Sidebar: upcoming matches ───────────────────────────── */
 const SURFACE_LABELS_PL = { Hard: 'Twarda', Clay: 'Ceglasta', Grass: 'Trawa', Carpet: 'Dywan' };
 
+// Convert IOC 3-letter code to emoji flag via ISO 3166-1 alpha-2
+const IOC_TO_ISO2 = {
+  USA:'US', GBR:'GB', FRA:'FR', GER:'DE', ESP:'ES', ITA:'IT', AUS:'AU', AUT:'AT',
+  SUI:'CH', SWE:'SE', NOR:'NO', DEN:'DK', FIN:'FI', NED:'NL', BEL:'BE', POR:'PT',
+  CZE:'CZ', SVK:'SK', POL:'PL', HUN:'HU', ROU:'RO', BUL:'BG', GRE:'GR', TUR:'TR',
+  CRO:'HR', SRB:'RS', SLO:'SI', UKR:'UA', BLR:'BY', RUS:'RU', KAZ:'KZ', UZB:'UZ',
+  CAN:'CA', MEX:'MX', BRA:'BR', ARG:'AR', CHI:'CL', COL:'CO', PER:'PE', URU:'UY',
+  VEN:'VE', ECU:'EC', PAR:'PY', BOL:'BO', JPN:'JP', CHN:'CN', KOR:'KR', TPE:'TW',
+  IND:'IN', THA:'TH', RSA:'ZA', EGY:'EG', MAR:'MA', TUN:'TN', QAT:'QA', UAE:'AE',
+  ISR:'IL', MON:'MC', LUX:'LU', GEO:'GE', ARM:'AM', AZE:'AZ', LAT:'LV', LTU:'LT',
+  EST:'EE', NZL:'NZ', PHI:'PH', MAS:'MY', BAH:'BS', HAI:'HT', JAM:'JM',
+};
+
+function iocToFlag(ioc) {
+  if (!ioc) return '';
+  const iso2 = IOC_TO_ISO2[ioc.toUpperCase()];
+  if (!iso2) return '';
+  return `<img class="flag-img" src="https://flagcdn.com/16x12/${iso2.toLowerCase()}.png" alt="${ioc}" title="${ioc}">`;
+}
+
+// Tournament name → country flag (keyword matching)
+const TOURNEY_FLAGS = [
+  [['australian open', 'brisbane', 'sydney', 'adelaide', 'perth', 'melbourne'], 'AU'],
+  [['roland garros', 'french open', 'paris', 'lyon', 'marseille', 'montpellier', 'metz', 'nice'], 'FR'],
+  [['wimbledon', "queen's", 'queens', 'eastbourne', 'nottingham', 'london'], 'GB'],
+  [['us open', 'indian wells', 'miami', 'cincinnati', 'washington', 'delray beach', 'newport', 'atlanta', 'los angeles', 'new york'], 'US'],
+  [['madrid', 'barcelona', 'mallorca', 'valencia', 'marbella'], 'ES'],
+  [['rome', 'italy', 'palermo', 'umag'], 'IT'],
+  [['halle', 'hamburg', 'munich', 'stuttgart', 'cologne', 'metz', 'berlin', 'vienna', 'kitzbuhel', 'kitzbühel'], 'DE'],
+  [['monte-carlo', 'monaco'], 'MC'],
+  [['basel', 'gstaad', 'geneva'], 'CH'],
+  [['toronto', 'montreal', 'canadian'], 'CA'],
+  [['tokyo', 'japan'], 'JP'],
+  [['shanghai', 'beijing', 'china'], 'CN'],
+  [['doha', 'qatar'], 'QA'],
+  [['dubai'], 'AE'],
+  [['acapulco', 'los cabos', 'mexico'], 'MX'],
+  [['buenos aires', 'cordoba', 'argentina'], 'AR'],
+  [['rio', 'brazil', 'brasil'], 'BR'],
+  [['santiago', 'chile'], 'CL'],
+  [['moscow', 'russia', 'st. petersburg'], 'RU'],
+  [['vienna', 'austria'], 'AT'],
+  [['stockholm', 'bastad', 'sweden'], 'SE'],
+  [['bucharest', 'romania', 'cluj'], 'RO'],
+  [['sofia', 'bulgaria'], 'BG'],
+  [['antwerp', 'belgium'], 'BE'],
+  [['rotterdam', 'netherlands'], 'NL'],
+  [['estoril', 'lisbon', 'portugal'], 'PT'],
+  [['marrakech', 'casablanca', 'morocco'], 'MA'],
+  [['zagreb', 'croatia'], 'HR'],
+  [['prague', 'czech'], 'CZ'],
+  [['auckland', 'new zealand'], 'NZ'],
+  [['pune', 'chennai', 'india'], 'IN'],
+  [['bogota', 'colombia'], 'CO'],
+  [['umag', 'croatia'], 'HR'],
+  [['winston-salem', 'memphis'], 'US'],
+];
+
+function tournamentFlag(name) {
+  if (!name) return '';
+  const lower = name.toLowerCase();
+  for (const [keywords, iso2] of TOURNEY_FLAGS) {
+    if (keywords.some(k => lower.includes(k))) {
+      return `<img class="flag-img" src="https://flagcdn.com/16x12/${iso2.toLowerCase()}.png" alt="${iso2}">`;
+    }
+  }
+  return '';
+}
+
 async function loadSidebarMatches() {
   const loadingEl = document.getElementById('sidebar-loading');
   const errorEl   = document.getElementById('sidebar-error');
@@ -450,17 +526,27 @@ async function loadSidebarMatches() {
     }
 
     for (const [tourney, ms] of Object.entries(groups)) {
-      // Group header
+      // Collapsible group header
+      const flag = tournamentFlag(tourney);
       const header = document.createElement('li');
       header.className = 'match-group-header';
-      header.textContent = tourney;
-      header.style.cssText = 'padding:10px 18px 4px; font-size:.7rem; text-transform:uppercase; letter-spacing:.6px; color:#4a5170; font-weight:700;';
+      header.innerHTML = `<span class="group-flag">${flag}</span><span class="group-name">${tourney}</span><span class="group-chevron">▾</span>`;
       listEl.appendChild(header);
 
+      // Container for match items
+      const groupItems = document.createElement('ul');
+      groupItems.className = 'match-group-items';
       for (const m of ms) {
         const li = renderMatchItem(m);
-        listEl.appendChild(li);
+        groupItems.appendChild(li);
       }
+      listEl.appendChild(groupItems);
+
+      // Toggle collapse on click
+      header.addEventListener('click', () => {
+        const collapsed = groupItems.classList.toggle('collapsed');
+        header.querySelector('.group-chevron').textContent = collapsed ? '▸' : '▾';
+      });
     }
   } catch (e) {
     loadingEl.classList.add('hidden');
@@ -477,6 +563,8 @@ function renderMatchItem(m) {
 
   const p1display = m.player1_resolved || m.player1_raw;
   const p2display = m.player2_resolved || m.player2_raw;
+  const p1flag = iocToFlag(m.player1_ioc);
+  const p2flag = iocToFlag(m.player2_ioc);
   const surfaceLabel = SURFACE_LABELS_PL[m.surface] || m.surface;
 
   // Status badge
@@ -498,10 +586,10 @@ function renderMatchItem(m) {
       <span class="match-date-small">${m.finished ? m.date_display : ''}</span>
     </div>
     <div class="match-players">
-      <span class="p1">${p1display}</span>
+      <span class="p1">${p1flag ? `<span class="player-flag">${p1flag}</span>` : ''}${p1display}</span>
       ${scoreStr}
       <br>
-      <span class="p2">${p2display}</span>
+      <span class="p2">${p2flag ? `<span class="player-flag">${p2flag}</span>` : ''}${p2display}</span>
     </div>
     <div class="match-meta">
       <span class="match-surface-pill pill-${m.surface}">${m.surface_icon} ${surfaceLabel}</span>
