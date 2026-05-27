@@ -130,6 +130,29 @@ def _parse_espn_competition(comp: dict, tourney: str, surface: str) -> dict | No
     }
 
 
+def _parse_espn_events(data: dict) -> list[dict]:
+    matches: list[dict] = []
+    for event in data.get("events") or []:
+        tourney = event.get("name") or event.get("shortName") or "ATP"
+        surface = infer_surface(tourney)
+        groupings = event.get("groupings") or []
+        if groupings:
+            for grouping in groupings:
+                grp = (grouping.get("grouping") or {}).get("displayName", "")
+                if any(w in grp.lower() for w in ["doubles", "mixed"]):
+                    continue
+                for comp in grouping.get("competitions") or []:
+                    m = _parse_espn_competition(comp, tourney, surface)
+                    if m:
+                        matches.append(m)
+        else:
+            for comp in event.get("competitions") or []:
+                m = _parse_espn_competition(comp, tourney, surface)
+                if m:
+                    matches.append(m)
+    return matches
+
+
 async def _fetch_espn(days_back: int = 2, days_forward: int = 10) -> list[dict]:
     today = datetime.now()
     start = (today - timedelta(days=days_back)).strftime("%Y%m%d")
@@ -140,25 +163,20 @@ async def _fetch_espn(days_back: int = 2, days_forward: int = 10) -> list[dict]:
             timeout=12,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
         ) as client:
+            # Try with date range
             r = await client.get(ESPN_ATP_URL, params={"dates": f"{start}-{end}"})
             r.raise_for_status()
             data = r.json()
+            matches = _parse_espn_events(data)
+
+            # If date range returned nothing, try without dates (current scoreboard)
+            if not matches:
+                r2 = await client.get(ESPN_ATP_URL)
+                r2.raise_for_status()
+                matches = _parse_espn_events(r2.json())
     except Exception as e:
         logger.warning(f"ESPN fetch failed: {e}")
         return []
-
-    matches: list[dict] = []
-    for event in data.get("events") or []:
-        tourney = event.get("name") or event.get("shortName") or "ATP"
-        surface = infer_surface(tourney)
-        for grouping in event.get("groupings") or []:
-            grp = (grouping.get("grouping") or {}).get("displayName", "")
-            if any(w in grp.lower() for w in ["doubles", "mixed"]):
-                continue
-            for comp in grouping.get("competitions") or []:
-                m = _parse_espn_competition(comp, tourney, surface)
-                if m:
-                    matches.append(m)
 
     logger.info(f"ESPN returned {len(matches)} matches")
     return matches
@@ -243,20 +261,36 @@ def _parse_sportsdb_event(ev: dict) -> dict | None:
 async def _fetch_sportsdb_fallback() -> list[dict]:
     results = []
     async with httpx.AsyncClient(timeout=10) as client:
-        for rn in range(13, 18):
-            try:
-                r = await client.get(
-                    f"{THESPORTSDB_BASE}/eventsround.php?id={ATP_LEAGUE_ID}&r={rn}&s=2026"
-                )
-                if r.status_code == 429:
-                    break
+        # Primary: eventsnext.php — returns upcoming events without needing a round number
+        try:
+            r = await client.get(f"{THESPORTSDB_BASE}/eventsnext.php?id={ATP_LEAGUE_ID}")
+            if r.status_code != 429:
                 for ev in (r.json().get("events") or []):
                     m = _parse_sportsdb_event(ev)
                     if m:
                         results.append(m)
-                await asyncio.sleep(0.3)
-            except Exception:
-                break
+        except Exception:
+            pass
+
+        if not results:
+            # Fallback: eventsround with a dynamically estimated round range
+            # Calibrated from observed data: day ~54 of year ≈ round 15
+            day_of_year = datetime.now().timetuple().tm_yday
+            est_round = max(1, round(day_of_year * 15 / 54))
+            for rn in range(max(1, est_round - 3), est_round + 8):
+                try:
+                    r = await client.get(
+                        f"{THESPORTSDB_BASE}/eventsround.php?id={ATP_LEAGUE_ID}&r={rn}&s=2026"
+                    )
+                    if r.status_code == 429:
+                        break
+                    for ev in (r.json().get("events") or []):
+                        m = _parse_sportsdb_event(ev)
+                        if m:
+                            results.append(m)
+                    await asyncio.sleep(0.3)
+                except Exception:
+                    break
     return results
 
 
@@ -298,10 +332,30 @@ async def fetch_upcoming_matches(limit: int = 40, force_refresh: bool = False) -
             ts = datetime.fromisoformat(m["date"]).timestamp()
         except Exception:
             ts = 0.0
-        return (order, ts if m["state"] == "pre" else -ts)
+        return (order, ts if m["state"] != "post" else -ts)
 
     unique.sort(key=_sort_key)
-    result = unique[:limit]
+
+    def _match_date(m: dict):
+        try:
+            return datetime.fromisoformat(m["date"]).date()
+        except Exception:
+            return None
+
+    today_date    = now.date()
+    tomorrow_date = today_date + timedelta(days=1)
+
+    # Prefer today's live/upcoming matches; fall back to tomorrow, then all future
+    active_today = [m for m in unique if not m["finished"] and _match_date(m) == today_date]
+    if active_today:
+        result = active_today[:limit]
+    else:
+        tomorrow_matches = [m for m in unique if _match_date(m) == tomorrow_date]
+        if tomorrow_matches:
+            result = tomorrow_matches[:limit]
+        else:
+            future = [m for m in unique if not m["finished"]]
+            result = (future or unique)[:limit]
 
     _mem_cache.update({"data": result, "ts": now})
     _save_disk(result)
